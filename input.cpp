@@ -4,36 +4,36 @@
 #ifdef _WIN32
 #include <conio.h>
 #else
-#include <termios.h>
 #include <unistd.h>
 #include <sys/select.h>
-#include <cstdlib>
-
-static bool s_initTermios = false;
-static struct termios s_origTermios;
-
-static void disableRawMode()
-{
-	if (s_initTermios) {
-		tcsetattr(STDIN_FILENO, TCSAFLUSH, &s_origTermios);
-		s_initTermios = false;
-	}
-}
-
-static void enableRawMode()
-{
-	if (!s_initTermios) {
-		tcgetattr(STDIN_FILENO, &s_origTermios);
-		std::atexit(disableRawMode);
-		struct termios raw = s_origTermios;
-		raw.c_lflag &= ~(ECHO | ICANON);
-		tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
-		s_initTermios = true;
-	}
-}
 #endif
 
-KeyAction Input::pollAction()
+Input::Input()
+#ifndef _WIN32
+	: m_rawModeEnabled{ false }, m_origTermios{}
+#endif
+{
+#ifndef _WIN32
+	if (tcgetattr(STDIN_FILENO, &m_origTermios) == 0) {
+		struct termios raw = m_origTermios;
+		raw.c_lflag &= ~(ECHO | ICANON);
+		if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == 0) {
+			m_rawModeEnabled = true;
+		}
+	}
+#endif
+}
+
+Input::~Input()
+{
+#ifndef _WIN32
+	if (m_rawModeEnabled) {
+		tcsetattr(STDIN_FILENO, TCSAFLUSH, &m_origTermios);
+	}
+#endif
+}
+
+KeyAction Input::pollAction() const
 {
 #ifdef _WIN32
 	if (_kbhit()) {
@@ -50,14 +50,13 @@ KeyAction Input::pollAction()
 	}
 	return KeyAction::NONE;
 #else
-	enableRawMode();
-	struct timeval tv = { 0L, 0L };
+	struct timeval tv = { input_constants::SELECT_TIMEOUT_SEC, input_constants::SELECT_TIMEOUT_USEC };
 	fd_set fds;
 	FD_ZERO(&fds);
 	FD_SET(STDIN_FILENO, &fds);
 	if (select(STDIN_FILENO + 1, &fds, nullptr, nullptr, &tv) > 0) {
 		char c = 0;
-		if (read(STDIN_FILENO, &c, 1) > 0) {
+		if (read(STDIN_FILENO, &c, input_constants::SINGLE_BYTE_READ) > 0) {
 			if (c == input_constants::KEY_SPACE) {
 				return KeyAction::SPACE;
 			}
@@ -73,48 +72,37 @@ KeyAction Input::pollAction()
 #endif
 }
 
-bool Input::isSpacePressed()
+char Input::waitForKey() const
 {
 #ifdef _WIN32
-	if (_kbhit()) {
-		int c = _getch();
-		return c == input_constants::KEY_SPACE;
-	}
-	return false;
+	return static_cast<char>(_getch());
 #else
-	return pollAction() == KeyAction::SPACE;
+	char c = 0;
+	if (read(STDIN_FILENO, &c, input_constants::SINGLE_BYTE_READ) > 0) {
+		return c;
+	}
+	return 0;
 #endif
 }
 
-bool Input::isSpecialPressed()
-{
-	return pollAction() == KeyAction::SPECIAL_HENKA;
-}
-
-void Input::clearBuffer()
+void Input::clearBuffer() const
 {
 #ifdef _WIN32
 	while (_kbhit()) {
 		_getch();
 	}
 #else
-	enableRawMode();
-	struct timeval tv = { 0L, 0L };
+	struct timeval tv = { input_constants::SELECT_TIMEOUT_SEC, input_constants::SELECT_TIMEOUT_USEC };
 	fd_set fds;
 	FD_ZERO(&fds);
 	FD_SET(STDIN_FILENO, &fds);
 	while (select(STDIN_FILENO + 1, &fds, nullptr, nullptr, &tv) > 0) {
 		char c = 0;
-		if (read(STDIN_FILENO, &c, 1) <= 0) {
+		if (read(STDIN_FILENO, &c, input_constants::SINGLE_BYTE_READ) <= 0) {
 			break;
 		}
 		FD_ZERO(&fds);
 		FD_SET(STDIN_FILENO, &fds);
 	}
 #endif
-}
-
-bool isSpacePressed()
-{
-	return Input::isSpacePressed();
 }

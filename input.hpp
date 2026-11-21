@@ -3,6 +3,10 @@
 #ifndef INPUT_HPP
 #define INPUT_HPP
 
+#ifndef _WIN32
+#include <termios.h>
+#endif
+
 enum class KeyAction {
 	NONE,
 	SPACE,
@@ -12,12 +16,21 @@ enum class KeyAction {
 
 class Input {
 public:
-	static KeyAction pollAction();
-	static bool isSpacePressed();
-	static bool isSpecialPressed();
-	static void clearBuffer();
-};
+	Input();
+	~Input();
 
-bool isSpacePressed();
+	Input(const Input&) = delete;
+	Input& operator=(const Input&) = delete;
+
+	KeyAction pollAction() const;
+	char waitForKey() const;
+	void clearBuffer() const;
+
+private:
+#ifndef _WIN32
+	bool m_rawModeEnabled;
+	struct termios m_origTermios;
+#endif
+};
 
 #endif

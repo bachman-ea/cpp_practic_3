@@ -1,6 +1,5 @@
 #include "botsumo.hpp"
 #include "constants.hpp"
-#include <algorithm>
 
 SlowBot::SlowBot()
 	: m_rng{ std::random_device{}() },
@@ -13,7 +12,7 @@ double SlowBot::generateAttackTime()
 	return m_dist(m_rng);
 }
 
-double SlowBot::getWindupDuration()
+double SlowBot::getWindupDuration() const
 {
 	return gameplay_constants::SLOW_BOT_WINDUP_DURATION;
 }
@@ -34,7 +33,7 @@ double AggressiveBot::generateAttackTime()
 	return m_dist(m_rng);
 }
 
-double AggressiveBot::getWindupDuration()
+double AggressiveBot::getWindupDuration() const
 {
 	return gameplay_constants::AGGRESSIVE_BOT_WINDUP_DURATION;
 }
@@ -46,14 +45,12 @@ std::string AggressiveBot::getName() const
 
 BerserkerBot::BerserkerBot()
 	: m_rng{ std::random_device{}() },
-	  m_lastBotPos{ gameplay_constants::START_BOT_POS },
-	  m_lastPlayerPos{ gameplay_constants::START_PLAYER_POS }
+	  m_lastBotPos{ gameplay_constants::START_BOT_POS }
 {
 }
 
-int BerserkerBot::updatePositionBeforeAttack(int currentBotPos, int currentPlayerPos)
+int BerserkerBot::updatePositionBeforeAttack(const int currentBotPos, const int currentPlayerPos)
 {
-	m_lastPlayerPos = currentPlayerPos;
 	if (currentBotPos > gameplay_constants::BERSERKER_MIN_ADVANCE_POS &&
 		currentBotPos > currentPlayerPos + gameplay_constants::BERSERKER_MIN_SAFETY_DISTANCE) {
 		std::uniform_int_distribution<int> dist(
@@ -89,7 +86,7 @@ double BerserkerBot::generateAttackTime()
 	return dist(m_rng);
 }
 
-double BerserkerBot::getWindupDuration()
+double BerserkerBot::getWindupDuration() const
 {
 	if (m_lastBotPos <= gameplay_constants::BERSERKER_CLOSE_RANGE_THRESHOLD) {
 		return gameplay_constants::BERSERKER_CLOSE_WINDUP;
@@ -110,7 +107,7 @@ std::string BerserkerBot::getName() const
 	return "Яростный берсерк";
 }
 
-int BerserkerBot::getTimeoutPenalty(int botPos) const
+int BerserkerBot::getTimeoutPenalty(const int botPos) const
 {
 	if (botPos <= gameplay_constants::BERSERKER_CLOSE_RANGE_THRESHOLD) {
 		return gameplay_constants::BERSERKER_CLOSE_TIMEOUT_PENALTY;
@@ -121,5 +118,4 @@ int BerserkerBot::getTimeoutPenalty(int botPos) const
 void BerserkerBot::reset()
 {
 	m_lastBotPos = gameplay_constants::START_BOT_POS;
-	m_lastPlayerPos = gameplay_constants::START_PLAYER_POS;
 }

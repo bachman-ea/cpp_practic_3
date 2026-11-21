@@ -1,19 +1,17 @@
 #include "gamestate.hpp"
-#include "input.hpp"
 #include <iostream>
 #include <chrono>
-#include <algorithm>
 #include <cstdlib>
 
 #ifdef _WIN32
-#include <conio.h>
 #include <windows.h>
 #else
 #include <unistd.h>
 #endif
 
 GameState::GameState()
-	: m_factory{ nullptr },
+	: m_input{},
+	  m_factory{ nullptr },
 	  m_player{ nullptr },
 	  m_bot{ nullptr },
 	  m_playerPos{ gameplay_constants::START_PLAYER_POS },
@@ -23,40 +21,22 @@ GameState::GameState()
 {
 }
 
-GameState::GameState(SumoFactory* factory)
-	: m_factory{ nullptr },
-	  m_player{ nullptr },
-	  m_bot{ nullptr },
-	  m_playerPos{ gameplay_constants::START_PLAYER_POS },
-	  m_botPos{ gameplay_constants::START_BOT_POS },
-	  m_collisionCount{ gameplay_constants::INITIAL_COLLISION_COUNT },
-	  m_henkaCharges{ gameplay_constants::HENKA_INITIAL_CHARGES }
+GameState::GameState(std::unique_ptr<SumoFactory> factory)
+	: GameState()
 {
-	setFactory(factory);
+	setFactory(std::move(factory));
 }
 
-GameState::~GameState()
+void GameState::setFactory(std::unique_ptr<SumoFactory> factory)
 {
-	delete m_player;
-	m_player = nullptr;
-	delete m_bot;
-	m_bot = nullptr;
-	delete m_factory;
-	m_factory = nullptr;
-}
-
-void GameState::setFactory(SumoFactory* factory)
-{
-	delete m_player;
-	m_player = nullptr;
-	delete m_bot;
-	m_bot = nullptr;
-	delete m_factory;
-	m_factory = factory;
-
+	m_factory = std::move(factory);
 	if (m_factory != nullptr) {
 		m_player = m_factory->createPlayer();
 		m_bot = m_factory->createBot();
+	}
+	else {
+		m_player.reset();
+		m_bot.reset();
 	}
 }
 
@@ -80,6 +60,75 @@ int GameState::getHenkaCharges() const
 	return m_henkaCharges;
 }
 
+void GameState::clearScreen() const
+{
+#ifdef _WIN32
+	std::system("cls");
+#else
+	std::system("clear");
+#endif
+}
+
+void GameState::sleepMs(const int milliseconds) const
+{
+#ifdef _WIN32
+	Sleep(milliseconds);
+#else
+	usleep(milliseconds * timing_constants::US_PER_MS);
+#endif
+}
+
+void GameState::printMenu() const
+{
+	clearScreen();
+	std::cout << "===================================================" << std::endl;
+	std::cout << "                 СУМО: ТОЛКАЙ УЖЕ!                 " << std::endl;
+	std::cout << "===================================================" << std::endl;
+	std::cout << " Выберите противника для поединка:" << std::endl << std::endl;
+	std::cout << " [1] Медленный сумоист (SlowBot)" << std::endl;
+	std::cout << " [2] Агрессивный сумоист (AggressiveBot)" << std::endl;
+	std::cout << " [3] Яростный берсерк (BerserkerBot)" << std::endl << std::endl;
+	std::cout << " --------------------------------------------------" << std::endl;
+	std::cout << " [0/ESC] Выход из игры" << std::endl;
+	std::cout << "===================================================" << std::endl;
+	std::cout << " Управление:" << std::endl;
+	std::cout << "   [Пробел] - Обычный толчок" << std::endl;
+	std::cout << "   [E]      - Хэнка (обманный уворот, 2 на матч)" << std::endl;
+	std::cout << "===================================================" << std::endl;
+	std::cout << "Ваш выбор: ";
+}
+
+void GameState::runMenu()
+{
+	bool running = true;
+	while (running) {
+		printMenu();
+		char ch = m_input.waitForKey();
+
+		switch (ch) {
+		case input_constants::KEY_EASY_BOT:
+			setFactory(std::make_unique<EasyFactory>());
+			run();
+			break;
+		case input_constants::KEY_HARD_BOT:
+			setFactory(std::make_unique<HardFactory>());
+			run();
+			break;
+		case input_constants::KEY_BERSERKER_BOT:
+			setFactory(std::make_unique<BerserkerFactory>());
+			run();
+			break;
+		case input_constants::KEY_RETURN:
+		case input_constants::KEY_ESCAPE:
+			running = false;
+			break;
+		default:
+			break;
+		}
+	}
+	clearScreen();
+}
+
 void GameState::resetGame()
 {
 	m_playerPos = gameplay_constants::START_PLAYER_POS;
@@ -89,13 +138,26 @@ void GameState::resetGame()
 	if (m_bot != nullptr) {
 		m_bot->reset();
 	}
-	Input::clearBuffer();
+	m_input.clearBuffer();
+}
+
+void GameState::printGameOver(const std::string& title, const std::string& description) const
+{
+	std::cout << std::endl << "====================================================" << std::endl;
+	std::cout << title << std::endl;
+	std::cout << description << std::endl;
+	std::cout << "====================================================" << std::endl;
+	std::cout << "Финальная позиция игрока: " << m_playerPos << std::endl;
+	std::cout << "Финальная позиция бота:   " << m_botPos << std::endl;
+	std::cout << "Количество столкновений: " << m_collisionCount << std::endl << std::endl;
+	std::cout << "Нажмите любую клавишу, чтобы вернуться в меню...";
+	m_input.waitForKey();
 }
 
 void GameState::run()
 {
-	if (m_factory == nullptr) {
-		setFactory(new EasyFactory());
+	if (m_factory == nullptr || m_bot == nullptr || m_player == nullptr) {
+		setFactory(std::make_unique<EasyFactory>());
 	}
 
 	resetGame();
@@ -104,65 +166,55 @@ void GameState::run()
 	while (!gameOver) {
 		m_botPos = m_bot->updatePositionBeforeAttack(m_botPos, m_playerPos);
 
-		double T = m_bot->generateAttackTime();
-		double W = m_bot->getWindupDuration();
+		double attackTime = m_bot->generateAttackTime();
+		double windupDuration = m_bot->getWindupDuration();
 
 		auto collisionStart = std::chrono::steady_clock::now();
 
 		bool resolved = false;
 		bool prevInWindow = false;
-		bool playerSuccess = false;
 
 		render(false);
 
 		while (!resolved) {
 			auto now = std::chrono::steady_clock::now();
 			double elapsed = std::chrono::duration<double>(now - collisionStart).count();
-			bool inWindow = (elapsed >= (T - W)) && (elapsed < T);
+			bool inWindow = (elapsed >= (attackTime - windupDuration)) && (elapsed < attackTime);
 
-			KeyAction action = Input::pollAction();
+			KeyAction action = m_input.pollAction();
 
-			if (elapsed >= T) {
+			if (elapsed >= attackTime) {
 				m_playerPos -= m_bot->getTimeoutPenalty(m_botPos);
 				resolved = true;
-				playerSuccess = false;
 				break;
 			}
 
 			if (action == KeyAction::SPACE) {
 				if (inWindow) {
 					m_botPos += gameplay_constants::PLAYER_SUCCESS_PUSH;
-					resolved = true;
-					playerSuccess = true;
-					break;
 				}
 				else {
 					m_playerPos -= gameplay_constants::PLAYER_EARLY_PENALTY;
-					resolved = true;
-					playerSuccess = false;
-					break;
 				}
+				resolved = true;
+				break;
 			}
 			else if (action == KeyAction::SPECIAL_HENKA) {
 				if (m_henkaCharges > 0) {
 					m_henkaCharges--;
-					bool inHenkaWindow = (elapsed >= (T - (W * gameplay_constants::HENKA_WINDOW_RATIO))) && (elapsed < T);
+					bool inHenkaWindow = (elapsed >= (attackTime - (windupDuration * gameplay_constants::HENKA_WINDOW_RATIO))) && (elapsed < attackTime);
 					if (inHenkaWindow) {
 						m_botPos += gameplay_constants::HENKA_SUCCESS_PUSH;
-						resolved = true;
-						playerSuccess = true;
-						break;
 					}
 					else {
 						m_playerPos -= gameplay_constants::HENKA_EARLY_PENALTY;
-						resolved = true;
-						playerSuccess = false;
-						break;
 					}
+					resolved = true;
+					break;
 				}
 			}
 			else if (action == KeyAction::EXIT) {
-				std::cout << "\nПоединок прерван пользователем.\n";
+				std::cout << std::endl << "Поединок прерван пользователем." << std::endl;
 				return;
 			}
 
@@ -171,85 +223,53 @@ void GameState::run()
 				render(inWindow);
 			}
 
-#ifdef _WIN32
-			Sleep(timing_constants::TICK_SLEEP_MS);
-#else
-			usleep(timing_constants::TICK_SLEEP_MS * 1000);
-#endif
+			sleepMs(timing_constants::TICK_SLEEP_MS);
 		}
-
-		m_bot->onRoundEnd(playerSuccess);
 
 		render(false);
 
 		if (m_botPos > gameplay_constants::ARENA_MAX) {
 			gameOver = true;
-			std::cout << "\n====================================================\n";
-			std::cout << "                 ПОБЕДА ИГРОКА!                     \n";
-			std::cout << " Вы вытолкнули соперника за край арены!             \n";
-			std::cout << "====================================================\n";
-			std::cout << "Финальная позиция игрока: " << m_playerPos << "\n";
-			std::cout << "Финальная позиция бота:   " << m_botPos << "\n";
-			std::cout << "Количество столкновений: " << m_collisionCount << "\n\n";
-			std::cout << "Нажмите любую клавишу, чтобы вернуться в меню...";
-#ifdef _WIN32
-			_getch();
-#endif
+			printGameOver(
+				"                 ПОБЕДА ИГРОКА!                     ",
+				" Вы вытолкнули соперника за край арены!             "
+			);
 			break;
 		}
 		else if (m_playerPos < gameplay_constants::ARENA_MIN) {
 			gameOver = true;
-			std::cout << "\n====================================================\n";
-			std::cout << "                   ПОРАЖЕНИЕ!                       \n";
-			std::cout << " Бот вытолкнул вас за пределы арены!                 \n";
-			std::cout << "====================================================\n";
-			std::cout << "Финальная позиция игрока: " << m_playerPos << "\n";
-			std::cout << "Финальная позиция бота:   " << m_botPos << "\n";
-			std::cout << "Количество столкновений: " << m_collisionCount << "\n\n";
-			std::cout << "Нажмите любую клавишу, чтобы вернуться в меню...";
-#ifdef _WIN32
-			_getch();
-#endif
+			printGameOver(
+				"                   ПОРАЖЕНИЕ!                       ",
+				" Бот вытолкнул вас за пределы арены!                 "
+			);
 			break;
 		}
 		else if (m_collisionCount >= gameplay_constants::MAX_COLLISIONS) {
 			gameOver = true;
-			std::cout << "\n====================================================\n";
-			std::cout << "                     НИЧЬЯ!                         \n";
-			std::cout << " За " << gameplay_constants::MAX_COLLISIONS << " столкновений никто не вылетел за край!\n";
-			std::cout << "====================================================\n";
-			std::cout << "Финальная позиция игрока: " << m_playerPos << "\n";
-			std::cout << "Финальная позиция бота:   " << m_botPos << "\n";
-			std::cout << "Итог: оба сумоиста удержались на арене.\n\n";
-			std::cout << "Нажмите любую клавишу, чтобы вернуться в меню...";
-#ifdef _WIN32
-			_getch();
-#endif
+			printGameOver(
+				"                     НИЧЬЯ!                         ",
+				" Никто не вылетел за край арены за лимит раундов!   "
+			);
 			break;
 		}
 
 		m_collisionCount++;
-
-#ifdef _WIN32
-		Sleep(timing_constants::RESULT_PAUSE_MS);
-#else
-		usleep(timing_constants::RESULT_PAUSE_MS * 1000);
-#endif
-		Input::clearBuffer();
+		sleepMs(timing_constants::RESULT_PAUSE_MS);
+		m_input.clearBuffer();
 	}
 }
 
-void GameState::render(bool inWindow) const
+void GameState::render(const bool inWindow) const
 {
-	std::system("cls");
-	std::cout << "Столкновение " << m_collisionCount << "\n";
-	std::cout << "Противник: " << m_bot->getName() << "\n\n";
+	clearScreen();
+	std::cout << "Столкновение " << m_collisionCount << std::endl;
+	std::cout << "Противник: " << m_bot->getName() << std::endl << std::endl;
 
 	printArena(inWindow);
 	printStatus(inWindow);
 }
 
-void GameState::printArena(bool inWindow) const
+void GameState::printArena(const bool inWindow) const
 {
 	char arenaStr[gameplay_constants::ARENA_SIZE + 1];
 	for (int i = 0; i < gameplay_constants::ARENA_SIZE; ++i) {
@@ -266,19 +286,19 @@ void GameState::printArena(bool inWindow) const
 		arenaStr[m_botPos] = botSymbol;
 	}
 
-	std::cout << "[" << arenaStr << "]\n";
+	std::cout << "[" << arenaStr << "]" << std::endl;
 	std::cout << " " << gameplay_constants::ARENA_MIN
-		      << "                            "
-		      << gameplay_constants::ARENA_MAX << "\n\n";
+		      << std::string(display_constants::ARENA_LABEL_GAP, ' ')
+		      << gameplay_constants::ARENA_MAX << std::endl << std::endl;
 }
 
-void GameState::printStatus(bool inWindow) const
+void GameState::printStatus(const bool inWindow) const
 {
 	char botSymbol = inWindow ? m_bot->getWindupSymbol() : m_bot->getSymbol();
 
-	std::cout << "игрок (" << m_player->getSymbol() << "): " << m_playerPos << "\n";
-	std::cout << "бот (" << botSymbol << "):   " << m_botPos << "\n";
-	std::cout << "цель: вытолкнуть бота за " << gameplay_constants::ARENA_MAX << "\n\n";
+	std::cout << "игрок (" << m_player->getSymbol() << "): " << m_playerPos << std::endl;
+	std::cout << "бот (" << botSymbol << "):   " << m_botPos << std::endl;
+	std::cout << "цель: вытолкнуть бота за " << gameplay_constants::ARENA_MAX << std::endl << std::endl;
 
-	std::cout << "Хэнка [E]: " << m_henkaCharges << "/" << gameplay_constants::HENKA_INITIAL_CHARGES << "\n";
+	std::cout << "Хэнка [E]: " << m_henkaCharges << "/" << gameplay_constants::HENKA_INITIAL_CHARGES << std::endl;
 }

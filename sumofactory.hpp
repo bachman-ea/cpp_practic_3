@@ -3,6 +3,7 @@
 #ifndef SUMOFACTORY_HPP
 #define SUMOFACTORY_HPP
 
+#include <memory>
 #include "sumowrestler.hpp"
 #include "botsumo.hpp"
 #include "playersumo.hpp"
@@ -11,34 +12,34 @@ class SumoFactory {
 public:
 	virtual ~SumoFactory() = default;
 
-	virtual BotSumo* createBot() = 0;
-	virtual PlayerSumo* createPlayer()
+	virtual std::unique_ptr<BotSumo> createBot() const = 0;
+	virtual std::unique_ptr<PlayerSumo> createPlayer() const
 	{
-		return new PlayerSumo();
+		return std::make_unique<PlayerSumo>();
 	}
 };
 
 class EasyFactory : public SumoFactory {
 public:
-	BotSumo* createBot() override
+	std::unique_ptr<BotSumo> createBot() const override
 	{
-		return new SlowBot();
+		return std::make_unique<SlowBot>();
 	}
 };
 
 class HardFactory : public SumoFactory {
 public:
-	BotSumo* createBot() override
+	std::unique_ptr<BotSumo> createBot() const override
 	{
-		return new AggressiveBot();
+		return std::make_unique<AggressiveBot>();
 	}
 };
 
 class BerserkerFactory : public SumoFactory {
 public:
-	BotSumo* createBot() override
+	std::unique_ptr<BotSumo> createBot() const override
 	{
-		return new BerserkerBot();
+		return std::make_unique<BerserkerBot>();
 	}
 };
 
